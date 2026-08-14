@@ -206,31 +206,42 @@ function parseHTML(html, targetUrl) {
     }
   }
 
-  // Smart Header Banner Image & Header Banner Text Detection
+  // Multi-layer Smart Header Banner Image & Header Banner Text Detection
   let headerBannerImg = '';
   let headerBannerText = '';
 
-  const headerDiv = doc.querySelector('.header-image');
-  if (headerDiv) {
-    const imgInHeader = headerDiv.querySelector('img');
-    if (imgInHeader && imgInHeader.getAttribute('src')) {
-      headerBannerImg = makeAbsUrl(imgInHeader.getAttribute('src'));
-    } else {
-      const txtInHeader = normText(headerDiv.textContent);
-      if (txtInHeader) headerBannerText = txtInHeader;
+  const imgNodes = doc.querySelectorAll('.header-image img, .main-info-pnl img, table.main-info-pnl img, img[src*="banner"], img[src*="Banner"], img[src*="logo"], img[src*="header"]');
+  for (const imgNode of imgNodes) {
+    const rawSrc = imgNode.getAttribute('src') || '';
+    if (rawSrc && !/tick\.png|cross\.png/i.test(rawSrc)) {
+      headerBannerImg = makeAbsUrl(rawSrc);
+      break;
     }
   }
 
   if (!headerBannerImg) {
-    const imgNode = doc.querySelector('.main-info-pnl img, table.main-info-pnl img, img[src*="banner"], img[src*="Banner"], img[src*="logo"], img[src*="header"]');
-    if (imgNode && imgNode.getAttribute('src')) {
-      headerBannerImg = makeAbsUrl(imgNode.getAttribute('src'));
-    }
-  }
+    const textSelectors = [
+      '.header-image',
+      '.header-text',
+      '.header-title',
+      'div[style*="text-align:center"]',
+      'div[style*="text-align: center"]',
+      'h1', 'h2', 'h3'
+    ];
 
-  if (!headerBannerImg && !headerBannerText) {
-    const textNode = doc.querySelector('.header-text, .header-title');
-    if (textNode) headerBannerText = normText(textNode.textContent);
+    for (const sel of textSelectors) {
+      const nodes = doc.querySelectorAll(sel);
+      for (const node of nodes) {
+        if (!node.querySelector('table.main-info-pnl')) {
+          const txt = normText(node.textContent);
+          if (txt && txt.length > 3 && !/question|option/i.test(txt)) {
+            headerBannerText = txt;
+            break;
+          }
+        }
+      }
+      if (headerBannerText) break;
+    }
   }
 
   const candidateInfo = {};
