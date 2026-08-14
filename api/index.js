@@ -206,22 +206,41 @@ function parseHTML(html, targetUrl) {
     }
   }
 
-  // Clean Simple Header Banner Image & Header Banner Text Detection
+  // Reliable Multi-Target Header Banner Image & Header Banner Text Detection
   let headerBannerImg = '';
   let headerBannerText = '';
 
-  const imgNode = doc.querySelector('.header-image img, .main-info-pnl img, table.main-info-pnl img');
-  if (imgNode) {
+  const imgNodes = doc.querySelectorAll('.header-image img, .main-info-pnl img, table.main-info-pnl img, img[src*="banner"], img[src*="Banner"], img[src*="logo"], img[src*="header"]');
+  for (const imgNode of imgNodes) {
     const rawSrc = imgNode.getAttribute('src') || '';
     if (rawSrc && !/tick\.png|cross\.png/i.test(rawSrc)) {
       headerBannerImg = makeAbsUrl(rawSrc);
+      break;
     }
   }
 
   if (!headerBannerImg) {
-    const textNode = doc.querySelector('.header-image, .header-text');
-    if (textNode) {
-      headerBannerText = normText(textNode.textContent);
+    const textSelectors = [
+      '.header-image',
+      '.header-text',
+      '.header-title',
+      'div[style*="text-align:center"]',
+      'div[style*="text-align: center"]',
+      'h1', 'h2', 'h3'
+    ];
+
+    for (const sel of textSelectors) {
+      const nodes = doc.querySelectorAll(sel);
+      for (const node of nodes) {
+        if (!node.querySelector('table.main-info-pnl')) {
+          const txt = normText(node.textContent);
+          if (txt && txt.length > 2 && !/question|option/i.test(txt)) {
+            headerBannerText = txt;
+            break;
+          }
+        }
+      }
+      if (headerBannerText) break;
     }
   }
 
