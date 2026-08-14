@@ -92,8 +92,6 @@ module.exports = async (req, res) => {
     return res.status(200).json({
       success: true,
       fetched_via: fetchedVia,
-      header_image: result.headerBannerImg,
-      header_text: result.headerBannerText,
       header_banner_img: result.headerBannerImg,
       header_banner_text: result.headerBannerText,
       candidate_info: result.candidateInfo,
@@ -235,7 +233,6 @@ function parseHTML(html, targetUrl) {
     if (textNode) headerBannerText = normText(textNode.textContent);
   }
 
-  // 2. Extract Candidate Info (Excluding * Note rows)
   const candidateInfo = {};
   doc.querySelectorAll('.main-info-pnl tr, table.main-info-pnl tr').forEach(tr => {
     const tds = tr.querySelectorAll('td');
@@ -246,14 +243,12 @@ function parseHTML(html, targetUrl) {
     }
   });
 
-  // 3. Section Names
   const sectionNames = [];
   doc.querySelectorAll('.section-lbl, .secName, .sec-lbl, td.section-lbl').forEach(s => {
     const name = normText(s.textContent).replace(/^Section\s*:\s*/i, '').trim();
     if (name && !sectionNames.includes(name)) sectionNames.push(name);
   });
 
-  // 4. Questions & Scoring
   let qTables = [...doc.querySelectorAll('table.questionRowTbl')];
   if (!qTables.length) qTables = [...doc.querySelectorAll('div.question-pnl')];
 
