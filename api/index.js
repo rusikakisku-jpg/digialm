@@ -12,104 +12,111 @@ const BD_PROXY = {
 };
 
 module.exports = async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  try {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
-  if (req.method === 'OPTIONS') return res.status(200).end();
+    if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const startTime = Date.now();
-  let html = '', targetUrl = '', fetchedVia = '';
+    const startTime = Date.now();
+    let html = '', targetUrl = '', fetchedVia = '';
 
-  // POST: HTML seedha body mein
-  if (req.method === 'POST') {
-    const body = req.body;
-    if (body?.html) html = body.html;
-    else if (typeof body === 'string') html = body;
-  }
-
-  // GET: URL se fetch
-  if (!html) {
-    targetUrl = req.query.url || '';
-    if (!targetUrl) return res.json({ success: false, error: 'Missing ?url= parameter' });
-
-    if (targetUrl.includes('%3A') || targetUrl.includes('%2F')) {
-      targetUrl = decodeURIComponent(targetUrl);
+    // POST: HTML seedha body mein
+    if (req.method === 'POST') {
+      const body = req.body;
+      if (body?.html) html = body.html;
+      else if (typeof body === 'string') html = body;
     }
 
-    if (!targetUrl.startsWith('http')) {
-      return res.json({ success: false, error: 'Invalid URL.' });
-    }
-
-    const isDigialm = /digialm\.com|tcsion\.com|AssessmentQP|touchstone|per\/g/i.test(targetUrl);
-    if (!isDigialm) {
-      return res.json({ success: false, error: 'No data found or Invalid/Expired Answer Key URL.' });
-    }
-
-    // STEP 1: Direct fetch
-    try {
-      const r = await axios.get(targetUrl, {
-        timeout: 10000,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
-          'Accept-Language': 'en-US,en;q=0.9'
-        },
-        httpsAgent: new https.Agent({ rejectUnauthorized: false })
-      });
-      if (r.data?.length > 200 && r.data.includes('main-info-pnl')) {
-        html = r.data;
-        fetchedVia = 'direct_fetch';
-      }
-    } catch {}
-
-    // STEP 2: Bright Data ISP Proxy
+    // GET: URL se fetch
     if (!html) {
+      targetUrl = req.query.url || '';
+      if (!targetUrl) return res.status(200).json({ success: false, error: 'Missing ?url= parameter' });
+
+      if (targetUrl.includes('%3A') || targetUrl.includes('%2F')) {
+        targetUrl = decodeURIComponent(targetUrl);
+      }
+
+      if (!targetUrl.startsWith('http')) {
+        return res.status(200).json({ success: false, error: 'Invalid URL.' });
+      }
+
+      const isDigialm = /digialm\.com|tcsion\.com|AssessmentQP|touchstone|per\/g/i.test(targetUrl);
+      if (!isDigialm) {
+        return res.status(200).json({ success: false, error: 'No data found or Invalid/Expired Answer Key URL.' });
+      }
+
+      // STEP 1: Direct fetch
       try {
         const r = await axios.get(targetUrl, {
-          timeout: 20000,
-          proxy: BD_PROXY,
-          httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+          timeout: 10000,
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Cache-Control': 'no-cache'
-          }
+            'Accept-Language': 'en-US,en;q=0.9'
+          },
+          httpsAgent: new https.Agent({ rejectUnauthorized: false })
         });
-        if (r.data?.length > 200 && r.data.includes('main-info-pnl')) {
+        if (r.data && typeof r.data === 'string' && r.data.length > 200 && r.data.includes('main-info-pnl')) {
           html = r.data;
-          fetchedVia = 'bright_data_isp_proxy';
+          fetchedVia = 'direct_fetch';
         }
-      } catch {}
+      } catch (e) {}
+
+      // STEP 2: Bright Data ISP Proxy
+      if (!html) {
+        try {
+          const r = await axios.get(targetUrl, {
+            timeout: 20000,
+            proxy: BD_PROXY,
+            httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+              'Accept-Language': 'en-US,en;q=0.9',
+              'Cache-Control': 'no-cache'
+            }
+          });
+          if (r.data && typeof r.data === 'string' && r.data.length > 200 && r.data.includes('main-info-pnl')) {
+            html = r.data;
+            fetchedVia = 'bright_data_isp_proxy';
+          }
+        } catch (e) {}
+      }
+    } else {
+      fetchedVia = 'direct_post';
     }
-  } else {
-    fetchedVia = 'direct_post';
+
+    if (!html || html.length < 100 || !html.includes('main-info-pnl')) {
+      return res.status(200).json({ success: false, error: 'No data found or Invalid/Expired Answer Key URL.' });
+    }
+
+    const result = parseHTML(html, targetUrl);
+
+    return res.status(200).json({
+      success: true,
+      fetched_via: fetchedVia,
+      header_image: result.headerImage,
+      candidate_info: result.candidateInfo,
+      score_summary: {
+        total_questions: result.questions.length,
+        attempted: result.totalAttempted,
+        unattempted: result.totalUnattempted,
+        correct_answers: result.totalRight,
+        wrong_answers: result.totalWrong,
+        marks_obtained: result.marksObtained
+      },
+      sections_list: result.sectionNames,
+      section_summary: result.sectionSummary,
+      questions_summary: result.questions,
+      execution_time: `${Date.now() - startTime} ms`
+    });
+  } catch (err) {
+    return res.status(200).json({
+      success: false,
+      error: 'An internal error occurred while processing the request.'
+    });
   }
-
-  if (!html || html.length < 100 || !html.includes('main-info-pnl')) {
-    return res.json({ success: false, error: 'No data found or Invalid/Expired Answer Key URL.' });
-  }
-
-  const result = parseHTML(html, targetUrl);
-
-  return res.json({
-    success: true,
-    fetched_via: fetchedVia,
-    header_image: result.headerImage,
-    candidate_info: result.candidateInfo,
-    score_summary: {
-      total_questions: result.questions.length,
-      attempted: result.totalAttempted,
-      unattempted: result.totalUnattempted,
-      correct_answers: result.totalRight,
-      wrong_answers: result.totalWrong,
-      marks_obtained: result.marksObtained
-    },
-    sections_list: result.sectionNames,
-    section_summary: result.sectionSummary,
-    questions_summary: result.questions,
-    execution_time: `${Date.now() - startTime} ms`
-  });
 };
 
 function parseHTML(html, targetUrl) {
