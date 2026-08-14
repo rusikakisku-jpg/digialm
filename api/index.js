@@ -145,7 +145,8 @@ function parseHTML(html, targetUrl) {
     if (/^[A-D]$/i.test(s)) return s.toUpperCase().charCodeAt(0) - 64;
     const m1 = s.match(/^(\d+)$/); if (m1) return parseInt(m1[1]);
     const m2 = s.match(/\b([1-4])\b/); if (m2) return parseInt(m2[1]);
-    const m3 = s.match(/\b([A-D])\b/i); if (m3) return m3[1].toUpperCase().charCodeAt(0) - 64;
+    const m3 = s.match(/([1-4])/); if (m3) return parseInt(m3[1]);
+    const m4 = s.match(/\b([A-D])\b/i); if (m4) return m4[1].toUpperCase().charCodeAt(0) - 64;
     return null;
   }
 
@@ -227,36 +228,60 @@ function parseHTML(html, targetUrl) {
   let totalWrong = 0;
   let totalUnattempted = 0;
   let idx = 1;
-  let lastSec = 'General Section';
+
+  // List all section headers for preceding calculation
+  const allSecHeaderNodes = [...doc.querySelectorAll('.section-lbl, .sec-lbl, .secName')];
 
   qTables.forEach(q => {
     let chosenRaw = null;
     const menuData = {};
 
-    // Detect section name for this question
-    const allSecs = doc.querySelectorAll('.section-lbl, .sec-lbl, .secName');
-    allSecs.forEach(s => {
-      if (q.compareDocumentPosition(s) & 4) {
-        const name = normText(s.textContent).replace(/^Section\s*:\s*/i, '').trim();
-        if (name) lastSec = name;
+    // Detect Section: Find the IMMEDIATE PRECEDING section header (DOCUMENT_POSITION_PRECEDING = 2)
+    let qSecName = 'General Section';
+    let lastPrecedingHeader = null;
+
+    allSecHeaderNodes.forEach(secHeader => {
+      // 2 is Node.DOCUMENT_POSITION_PRECEDING (secHeader is BEFORE q)
+      if (q.compareDocumentPosition(secHeader) & 2) {
+        lastPrecedingHeader = secHeader;
       }
     });
 
-    q.parentNode?.querySelectorAll('td').forEach(td => {
-      if (/chosen option/i.test(normText(td.textContent))) {
-        const tr = td.parentNode;
-        if (tr) {
-          const m = normText(tr.textContent).match(/chosen option\s*:\s*(\S+)/i);
-          if (m) chosenRaw = m[1].trim();
+    if (lastPrecedingHeader) {
+      const secText = normText(lastPrecedingHeader.textContent).replace(/^Section\s*:\s*/i, '').trim();
+      if (secText) qSecName = secText;
+    }
+
+    // Find candidate menu table associated with this question
+    let parent = q.parentNode;
+    let menuTable = null;
+
+    if (parent) {
+      const tds = parent.querySelectorAll('td');
+      tds.forEach(td => {
+        const txt = normText(td.textContent);
+        if (/chosen option/i.test(txt)) {
+          const tr = td.parentNode;
+          if (tr) {
+            const m = normText(tr.textContent).match(/chosen option\s*:\s*(\S+)/i);
+            if (m) chosenRaw = m[1].trim();
+          }
+          let cur = td.parentNode;
+          while (cur && cur.tagName !== 'TABLE') cur = cur.parentNode;
+          if (cur) menuTable = cur;
         }
-        let t = td.parentNode;
-        while (t && t.tagName !== 'TABLE') t = t.parentNode;
-        if (t) t.querySelectorAll('tr').forEach(mtr => {
-          const txt = normText(mtr.textContent);
-          if (txt.includes(':')) { const [k, ...r] = txt.split(':'); menuData[k.trim()] = r.join(':').trim(); }
-        });
-      }
-    });
+      });
+    }
+
+    if (menuTable) {
+      menuTable.querySelectorAll('tr').forEach(mtr => {
+        const txt = normText(mtr.textContent);
+        if (txt.includes(':')) {
+          const [k, ...r] = txt.split(':');
+          menuData[k.trim()] = r.join(':').trim();
+        }
+      });
+    }
 
     const qId = menuData['Question ID'] || null;
     const qType = menuData['Question Type'] || 'MCQ';
@@ -308,8 +333,8 @@ function parseHTML(html, targetUrl) {
       totalWrong++;
     }
 
-    if (!sectionSummary[lastSec]) {
-      sectionSummary[lastSec] = {
+    if (!sectionSummary[qSecName]) {
+      sectionSummary[qSecName] = {
         total_questions: 0,
         attempted: 0,
         unattempted: 0,
@@ -319,22 +344,22 @@ function parseHTML(html, targetUrl) {
       };
     }
 
-    sectionSummary[lastSec].total_questions++;
+    sectionSummary[qSecName].total_questions++;
     if (status === 'Correct') {
-      sectionSummary[lastSec].correct_answers++;
-      sectionSummary[lastSec].attempted++;
+      sectionSummary[qSecName].correct_answers++;
+      sectionSummary[qSecName].attempted++;
     } else if (status === 'Wrong') {
-      sectionSummary[lastSec].wrong_answers++;
-      sectionSummary[lastSec].attempted++;
+      sectionSummary[qSecName].wrong_answers++;
+      sectionSummary[qSecName].attempted++;
     } else {
-      sectionSummary[lastSec].unattempted++;
+      sectionSummary[qSecName].unattempted++;
     }
 
     questions.push({
       q_no: idx++,
       question_id: qId,
       question_type: qType,
-      section: lastSec,
+      section: qSecName,
       question_text: qData.text,
       question_image: qData.image,
       question_html: qData.html,
