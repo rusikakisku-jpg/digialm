@@ -197,7 +197,7 @@ function parseHTML(html, targetUrl) {
                          .replace(/\s+/g, ' ')
                          .trim();
 
-    const hasHtmlTags = /<(?:sup|sub|table|tr|td|th|img|math|svg|span|div|b|i|u|strong|em|p|br)\b/i.test(innerHtml);
+    const hasHtmlTags = (cloned.children && cloned.children.length > 0);
 
     // MUTUALLY EXCLUSIVE CLASSIFICATION (Text vs Image vs HTML)
     if (hasText && !hasImage && !hasHtmlTags) {
