@@ -24,7 +24,6 @@ module.exports = async (req, res) => {
     const startTime = Date.now();
     let html = '', targetUrl = '', fetchedVia = '';
 
-    // 1. POST Request: HTML seedha body mein
     if (req.method === 'POST') {
       const body = req.body;
       if (body?.html) html = body.html;
@@ -32,7 +31,6 @@ module.exports = async (req, res) => {
       if (html) fetchedVia = 'direct_post';
     }
 
-    // 2. GET Request: URL se fetch
     if (!html) {
       targetUrl = req.query.url || '';
       if (!targetUrl) return res.status(200).json({ success: false, error: 'Missing ?url= parameter' });
@@ -50,7 +48,6 @@ module.exports = async (req, res) => {
         return res.status(200).json({ success: false, error: 'No data found or Invalid/Expired Answer Key URL.' });
       }
 
-      // STEP A: Attempt 1 - Direct fetch (Fast 5s, No Proxy)
       try {
         const r = await axios.get(targetUrl, {
           timeout: 5000,
@@ -66,7 +63,6 @@ module.exports = async (req, res) => {
         }
       } catch (e) {}
 
-      // STEP B: Attempt 2 - Bright Data ISP Proxy Fetch
       if (!html) {
         try {
           const r = await axios.get(targetUrl, {
@@ -87,18 +83,19 @@ module.exports = async (req, res) => {
       }
     }
 
-    // 3. Final Validation Check
     if (!html || html.length < 100 || !html.includes('main-info-pnl')) {
       return res.status(200).json({ success: false, error: 'No data found or Invalid/Expired Answer Key URL.' });
     }
 
-    // 4. Parse HTML (100% Identical Logic to api_v2.php)
     const result = parseHTML(html, targetUrl);
 
     return res.status(200).json({
       success: true,
       fetched_via: fetchedVia,
-      header_image: result.headerImage,
+      header_image: result.headerBannerImg,
+      header_text: result.headerBannerText,
+      header_banner_img: result.headerBannerImg,
+      header_banner_text: result.headerBannerText,
       candidate_info: result.candidateInfo,
       score_summary: {
         total_questions: result.questions.length,
@@ -129,10 +126,9 @@ function parseHTML(html, targetUrl) {
     return t ? t.replace(/[\u00A0\u200B]/g, ' ').replace(/\s+/g, ' ').trim() : '';
   }
 
-  // 100% PHP-identical make_abs_url logic
   function makeAbsUrl(src) {
     if (!src) return '';
-    if (src.startsWith('data:image/')) return src; // Base64 data URL
+    if (src.startsWith('data:image/')) return src;
     if (src.startsWith('http')) return src.replace(/(?<!:)\/\/+/g, '/');
 
     if (targetUrl) {
@@ -212,10 +208,32 @@ function parseHTML(html, targetUrl) {
     }
   }
 
-  // 1. Extract Header Image / Logo URL
-  let headerImage = '';
-  const imgNode = doc.querySelector('.header-image img, .main-info-pnl img, table.main-info-pnl img, img[src*="logo"], img[src*="header"], img[src*="Banner"]');
-  if (imgNode) headerImage = makeAbsUrl(imgNode.getAttribute('src') || '');
+  // Smart Header Banner Image & Header Banner Text Detection
+  let headerBannerImg = '';
+  let headerBannerText = '';
+
+  const headerDiv = doc.querySelector('.header-image');
+  if (headerDiv) {
+    const imgInHeader = headerDiv.querySelector('img');
+    if (imgInHeader && imgInHeader.getAttribute('src')) {
+      headerBannerImg = makeAbsUrl(imgInHeader.getAttribute('src'));
+    } else {
+      const txtInHeader = normText(headerDiv.textContent);
+      if (txtInHeader) headerBannerText = txtInHeader;
+    }
+  }
+
+  if (!headerBannerImg) {
+    const imgNode = doc.querySelector('.main-info-pnl img, table.main-info-pnl img, img[src*="banner"], img[src*="Banner"], img[src*="logo"], img[src*="header"]');
+    if (imgNode && imgNode.getAttribute('src')) {
+      headerBannerImg = makeAbsUrl(imgNode.getAttribute('src'));
+    }
+  }
+
+  if (!headerBannerImg && !headerBannerText) {
+    const textNode = doc.querySelector('.header-text, .header-title');
+    if (textNode) headerBannerText = normText(textNode.textContent);
+  }
 
   // 2. Extract Candidate Info (Excluding * Note rows)
   const candidateInfo = {};
@@ -256,7 +274,6 @@ function parseHTML(html, targetUrl) {
     let lastPrecedingHeader = null;
 
     allSecHeaderNodes.forEach(secHeader => {
-      // 2 is Node.DOCUMENT_POSITION_PRECEDING
       if (q.compareDocumentPosition(secHeader) & 2) {
         lastPrecedingHeader = secHeader;
       }
@@ -302,15 +319,11 @@ function parseHTML(html, targetUrl) {
     const optIds = {};
     for (let i = 1; i <= 4; i++) { if (menuData[`Option ${i} ID`]) optIds[i] = menuData[`Option ${i} ID`]; }
 
-    // Question content processing
     const qTds = q.querySelectorAll('td.qText, td.questionText, td.bold');
     const qTd = qTds.length >= 2 ? qTds[1] : qTds[0];
     const qData = classifyAndProcessNode(qTd, false);
 
-    // Option rows content processing - Exact PHP class matching: td.rightAns, td.wrngAns
     const opts = [...q.querySelectorAll('td.rightAns, td.wrngAns, tr.rightAns td, tr.wrngAns td')];
-    
-    // De-duplicate td elements in case selector matches both tr and td
     const uniqueOpts = [];
     opts.forEach(opt => {
       if (opt.tagName === 'TD' && !uniqueOpts.includes(opt)) {
@@ -397,7 +410,6 @@ function parseHTML(html, targetUrl) {
     });
   });
 
-  // Calculate marks per section (Correct - 0.25 * Wrong)
   for (const s in sectionSummary) {
     sectionSummary[s].marks_obtained = parseFloat(
       ((sectionSummary[s].correct_answers * 1.0) - (sectionSummary[s].wrong_answers * 0.25)).toFixed(2)
@@ -408,7 +420,8 @@ function parseHTML(html, targetUrl) {
   const marksObtained = parseFloat(((totalRight * 1.0) - (totalWrong * 0.25)).toFixed(2));
 
   return {
-    headerImage,
+    headerBannerImg,
+    headerBannerText,
     candidateInfo,
     sectionNames,
     sectionSummary,
