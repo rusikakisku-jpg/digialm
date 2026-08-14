@@ -2,6 +2,7 @@ const axios = require('axios');
 const { JSDOM } = require('jsdom');
 const https = require('https');
 
+// Bright Data ISP Proxy Configuration ONLY
 const BD_PROXY = {
   host: 'brd.superproxy.io',
   port: 44445,
@@ -28,6 +29,7 @@ module.exports = async (req, res) => {
       const body = req.body;
       if (body?.html) html = body.html;
       else if (typeof body === 'string') html = body;
+      if (html) fetchedVia = 'direct_post';
     }
 
     // GET: URL se fetch
@@ -48,45 +50,26 @@ module.exports = async (req, res) => {
         return res.status(200).json({ success: false, error: 'No data found or Invalid/Expired Answer Key URL.' });
       }
 
-      // STEP 1: Direct fetch
+      // Fetch via Bright Data ISP Proxy ONLY (NO Fallback)
       try {
         const r = await axios.get(targetUrl, {
-          timeout: 10000,
+          timeout: 25000,
+          proxy: BD_PROXY,
+          httpsAgent: new https.Agent({ rejectUnauthorized: false }),
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9'
-          },
-          httpsAgent: new https.Agent({ rejectUnauthorized: false })
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Cache-Control': 'no-cache'
+          }
         });
         if (r.data && typeof r.data === 'string' && r.data.length > 200 && r.data.includes('main-info-pnl')) {
           html = r.data;
-          fetchedVia = 'direct_fetch';
+          fetchedVia = 'bright_data_isp_proxy';
         }
       } catch (e) {}
-
-      // STEP 2: Bright Data ISP Proxy
-      if (!html) {
-        try {
-          const r = await axios.get(targetUrl, {
-            timeout: 20000,
-            proxy: BD_PROXY,
-            httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
-              'Accept-Language': 'en-US,en;q=0.9',
-              'Cache-Control': 'no-cache'
-            }
-          });
-          if (r.data && typeof r.data === 'string' && r.data.length > 200 && r.data.includes('main-info-pnl')) {
-            html = r.data;
-            fetchedVia = 'bright_data_isp_proxy';
-          }
-        } catch (e) {}
-      }
-    } else {
-      fetchedVia = 'direct_post';
     }
 
+    // Final Validation Check
     if (!html || html.length < 100 || !html.includes('main-info-pnl')) {
       return res.status(200).json({ success: false, error: 'No data found or Invalid/Expired Answer Key URL.' });
     }
