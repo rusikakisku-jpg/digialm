@@ -2,7 +2,7 @@ const axios = require('axios');
 const { JSDOM } = require('jsdom');
 const https = require('https');
 
-// Bright Data ISP Proxy Configuration ONLY
+// Bright Data ISP Proxy Configuration
 const BD_PROXY = {
   host: 'brd.superproxy.io',
   port: 44445,
@@ -24,7 +24,7 @@ module.exports = async (req, res) => {
     const startTime = Date.now();
     let html = '', targetUrl = '', fetchedVia = '';
 
-    // POST: HTML seedha body mein
+    // 1. POST Request: HTML seedha body mein
     if (req.method === 'POST') {
       const body = req.body;
       if (body?.html) html = body.html;
@@ -32,7 +32,7 @@ module.exports = async (req, res) => {
       if (html) fetchedVia = 'direct_post';
     }
 
-    // GET: URL se fetch
+    // 2. GET Request: URL se fetch
     if (!html) {
       targetUrl = req.query.url || '';
       if (!targetUrl) return res.status(200).json({ success: false, error: 'Missing ?url= parameter' });
@@ -50,30 +50,49 @@ module.exports = async (req, res) => {
         return res.status(200).json({ success: false, error: 'No data found or Invalid/Expired Answer Key URL.' });
       }
 
-      // Fetch via Bright Data ISP Proxy ONLY (NO Fallback)
+      // STEP A: Attempt 1 - Direct fetch (Fast 5s, No Proxy)
       try {
         const r = await axios.get(targetUrl, {
-          timeout: 25000,
-          proxy: BD_PROXY,
-          httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+          timeout: 5000,
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Cache-Control': 'no-cache'
-          }
+            'Accept-Language': 'en-US,en;q=0.9'
+          },
+          httpsAgent: new https.Agent({ rejectUnauthorized: false })
         });
         if (r.data && typeof r.data === 'string' && r.data.length > 200 && r.data.includes('main-info-pnl')) {
           html = r.data;
-          fetchedVia = 'bright_data_isp_proxy';
+          fetchedVia = 'direct_vps';
         }
       } catch (e) {}
+
+      // STEP B: Attempt 2 - Bright Data ISP Proxy Fetch
+      if (!html) {
+        try {
+          const r = await axios.get(targetUrl, {
+            timeout: 15000,
+            proxy: BD_PROXY,
+            httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+              'Accept-Language': 'en-US,en;q=0.9',
+              'Cache-Control': 'no-cache'
+            }
+          });
+          if (r.data && typeof r.data === 'string' && r.data.length > 200 && r.data.includes('main-info-pnl')) {
+            html = r.data;
+            fetchedVia = 'bright_data_isp_proxy';
+          }
+        } catch (e) {}
+      }
     }
 
-    // Final Validation Check
+    // 3. Final Validation Check
     if (!html || html.length < 100 || !html.includes('main-info-pnl')) {
       return res.status(200).json({ success: false, error: 'No data found or Invalid/Expired Answer Key URL.' });
     }
 
+    // 4. Parse HTML (100% Identical Logic to api_v2.php)
     const result = parseHTML(html, targetUrl);
 
     return res.status(200).json({
@@ -109,6 +128,7 @@ function parseHTML(html, targetUrl) {
   function normText(t) {
     return t ? t.replace(/[\u00A0\u200B]/g, ' ').replace(/\s+/g, ' ').trim() : '';
   }
+
   function makeAbsUrl(src) {
     if (!src || src.startsWith('data:')) return src || '';
     if (src.startsWith('http')) return src;
@@ -117,6 +137,7 @@ function parseHTML(html, targetUrl) {
       return src.startsWith('/') ? `${base.protocol}//${base.host}${src}` : `${base.protocol}//${base.host}/${src}`;
     } catch { return src; }
   }
+
   function chosenToIndex(s) {
     if (!s) return null;
     s = s.trim();
@@ -128,10 +149,57 @@ function parseHTML(html, targetUrl) {
     return null;
   }
 
+  function classifyAndProcessNode(node, isOption = false) {
+    if (!node) return { text: "", image: "", html: "" };
+
+    const cloned = node.cloneNode(true);
+    const imgs = cloned.querySelectorAll('img');
+    const validImgs = [];
+    const toRemove = [];
+
+    imgs.forEach(img => {
+      const src = img.getAttribute('src') || '';
+      if (/tick\.png|cross\.png/i.test(src)) {
+        toRemove.push(img);
+      } else {
+        const absSrc = makeAbsUrl(src);
+        while (img.attributes.length > 0) {
+          img.removeAttribute(img.attributes[0].name);
+        }
+        img.setAttribute('src', absSrc);
+        validImgs.push(absSrc);
+      }
+    });
+
+    toRemove.forEach(rImg => rImg.parentNode?.removeChild(rImg));
+
+    const rawText = normText(cloned.textContent);
+    const cleanCheckText = rawText.replace(/^(?:Q\.\s*\d+|[A-D][\.\)\s]*)/i, '').trim();
+
+    const hasText = Boolean(cleanCheckText);
+    const hasImage = validImgs.length > 0;
+
+    let innerHtml = cloned.innerHTML || '';
+    innerHtml = innerHtml.replace(/<sup>\s*<\/sup>/gi, '')
+                         .replace(/<sub>\s*<\/sub>/gi, '')
+                         .replace(/\s+/g, ' ')
+                         .trim();
+
+    if (hasText && !hasImage) {
+      return { text: rawText, image: "", html: "" };
+    } else if (!hasText && hasImage) {
+      return { text: "", image: validImgs[0], html: "" };
+    } else {
+      return { text: "", image: "", html: innerHtml };
+    }
+  }
+
+  // 1. Extract Header Image / Logo URL
   let headerImage = '';
   const imgNode = doc.querySelector('.header-image img, .main-info-pnl img, img[src*="logo"], img[src*="Banner"]');
   if (imgNode) headerImage = makeAbsUrl(imgNode.getAttribute('src'));
 
+  // 2. Extract Candidate Info (Excluding * Note rows)
   const candidateInfo = {};
   doc.querySelectorAll('.main-info-pnl tr, table.main-info-pnl tr').forEach(tr => {
     const tds = tr.querySelectorAll('td');
@@ -142,22 +210,30 @@ function parseHTML(html, targetUrl) {
     }
   });
 
+  // 3. Section Names
   const sectionNames = [];
   doc.querySelectorAll('.section-lbl, .secName, .sec-lbl').forEach(s => {
     const name = normText(s.textContent).replace(/^Section\s*:\s*/i, '').trim();
     if (name && !sectionNames.includes(name)) sectionNames.push(name);
   });
 
+  // 4. Questions & Scoring
   let qTables = [...doc.querySelectorAll('table.questionRowTbl')];
   if (!qTables.length) qTables = [...doc.querySelectorAll('div.question-pnl')];
 
-  const questions = [], sectionSummary = {};
-  let totalRight = 0, totalWrong = 0, totalUnattempted = 0, idx = 1, lastSec = 'General Section';
+  const questions = [];
+  const sectionSummary = {};
+  let totalRight = 0;
+  let totalWrong = 0;
+  let totalUnattempted = 0;
+  let idx = 1;
+  let lastSec = 'General Section';
 
   qTables.forEach(q => {
     let chosenRaw = null;
     const menuData = {};
 
+    // Detect section name for this question
     const allSecs = doc.querySelectorAll('.section-lbl, .sec-lbl, .secName');
     allSecs.forEach(s => {
       if (q.compareDocumentPosition(s) & 4) {
@@ -187,55 +263,110 @@ function parseHTML(html, targetUrl) {
     const optIds = {};
     for (let i = 1; i <= 4; i++) { if (menuData[`Option ${i} ID`]) optIds[i] = menuData[`Option ${i} ID`]; }
 
+    // Question content processing
     const qTds = q.querySelectorAll('td.qText, td.questionText, td.bold');
     const qTd = qTds.length >= 2 ? qTds[1] : qTds[0];
-    const qText = qTd ? normText(qTd.textContent) : '';
-    const qImg = qTd?.querySelector('img') ? makeAbsUrl(qTd.querySelector('img').getAttribute('src')) : '';
+    const qData = classifyAndProcessNode(qTd, false);
 
+    // Option rows content processing
     const opts = q.querySelectorAll('td.rightAns, td.wrngAns');
     const options = [];
-    let rightText = 'N/A', rightPos = null;
+    let rightText = 'N/A';
+    let rightPos = null;
 
     opts.forEach((opt, i) => {
       const num = i + 1;
       const isCorrect = opt.classList.contains('rightAns');
-      const oText = normText(opt.textContent);
-      const oImg = opt.querySelector('img') ? makeAbsUrl(opt.querySelector('img').getAttribute('src')) : '';
-      if (isCorrect) { rightText = oText; rightPos = num; }
-      options.push({ option_no: num, option_id: optIds[num] || null, option_text: oText, option_image: oImg, is_correct: isCorrect });
+      const optData = classifyAndProcessNode(opt, true);
+      
+      if (isCorrect) {
+        rightText = normText(opt.textContent);
+        rightPos = num;
+      }
+      options.push({
+        option_no: num,
+        option_id: optIds[num] || null,
+        option_text: optData.text,
+        option_image: optData.image,
+        option_html: optData.html,
+        is_correct: isCorrect
+      });
     });
 
     const ci = chosenToIndex(chosenRaw);
     let status = 'Unattempted';
-    if (ci === null) { totalUnattempted++; }
-    else if (rightPos !== null && ci === rightPos) { status = 'Correct'; totalRight++; }
-    else { status = 'Wrong'; totalWrong++; }
+    const chosenOptId = (ci && optIds[ci]) ? optIds[ci] : null;
 
-    if (!sectionSummary[lastSec]) sectionSummary[lastSec] = { total_questions: 0, attempted: 0, unattempted: 0, correct_answers: 0, wrong_answers: 0, marks_obtained: 0 };
+    if (ci === null) {
+      status = 'Unattempted';
+      totalUnattempted++;
+    } else if (rightPos !== null && ci === rightPos) {
+      status = 'Correct';
+      totalRight++;
+    } else {
+      status = 'Wrong';
+      totalWrong++;
+    }
+
+    if (!sectionSummary[lastSec]) {
+      sectionSummary[lastSec] = {
+        total_questions: 0,
+        attempted: 0,
+        unattempted: 0,
+        correct_answers: 0,
+        wrong_answers: 0,
+        marks_obtained: 0.0
+      };
+    }
+
     sectionSummary[lastSec].total_questions++;
-    if (status === 'Correct') { sectionSummary[lastSec].correct_answers++; sectionSummary[lastSec].attempted++; }
-    else if (status === 'Wrong') { sectionSummary[lastSec].wrong_answers++; sectionSummary[lastSec].attempted++; }
-    else sectionSummary[lastSec].unattempted++;
+    if (status === 'Correct') {
+      sectionSummary[lastSec].correct_answers++;
+      sectionSummary[lastSec].attempted++;
+    } else if (status === 'Wrong') {
+      sectionSummary[lastSec].wrong_answers++;
+      sectionSummary[lastSec].attempted++;
+    } else {
+      sectionSummary[lastSec].unattempted++;
+    }
 
     questions.push({
-      q_no: idx++, question_id: qId, question_type: qType, section: lastSec,
-      question_text: qText, question_image: qImg,
+      q_no: idx++,
+      question_id: qId,
+      question_type: qType,
+      section: lastSec,
+      question_text: qData.text,
+      question_image: qData.image,
+      question_html: qData.html,
+      options: options,
       chosen_option: chosenRaw || 'Not Answered',
-      chosen_option_id: (ci && optIds[ci]) ? optIds[ci] : null,
-      right_option: rightText, right_option_no: rightPos, options, status
+      chosen_option_id: chosenOptId,
+      right_option: rightText,
+      right_option_no: rightPos,
+      status: status
     });
   });
 
+  // Calculate marks per section (Correct - 0.25 * Wrong)
   for (const s in sectionSummary) {
     sectionSummary[s].marks_obtained = parseFloat(
-      ((sectionSummary[s].correct_answers) - (sectionSummary[s].wrong_answers * 0.25)).toFixed(2)
+      ((sectionSummary[s].correct_answers * 1.0) - (sectionSummary[s].wrong_answers * 0.25)).toFixed(2)
     );
   }
 
+  const totalAttempted = totalRight + totalWrong;
+  const marksObtained = parseFloat(((totalRight * 1.0) - (totalWrong * 0.25)).toFixed(2));
+
   return {
-    headerImage, candidateInfo, sectionNames, sectionSummary, questions,
-    totalRight, totalWrong, totalUnattempted,
-    totalAttempted: totalRight + totalWrong,
-    marksObtained: parseFloat(((totalRight) - (totalWrong * 0.25)).toFixed(2))
+    headerImage,
+    candidateInfo,
+    sectionNames,
+    sectionSummary,
+    questions,
+    totalRight,
+    totalWrong,
+    totalUnattempted,
+    totalAttempted,
+    marksObtained
   };
 }
