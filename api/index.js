@@ -186,24 +186,19 @@ function parseHTML(html, targetUrl) {
     });
 
     const rawText = normText(cloned.textContent);
-    const cleanCheckText = rawText.replace(/^(?:Q\.\s*\d+|[A-D][\.\)\s]*)/i, '').trim();
-
-    const hasText = Boolean(cleanCheckText);
-    const hasImage = validImgs.length > 0;
-
     let innerHtml = cloned.innerHTML || '';
     innerHtml = innerHtml.replace(/<sup>\s*<\/sup>/gi, '')
                          .replace(/<sub>\s*<\/sub>/gi, '')
                          .replace(/\s+/g, ' ')
                          .trim();
 
-    if (hasText && !hasImage) {
-      return { text: rawText, image: "", html: "" };
-    } else if (!hasText && hasImage) {
-      return { text: "", image: validImgs[0], html: "" };
-    } else {
-      return { text: "", image: "", html: innerHtml };
-    }
+    const singleImg = (validImgs.length === 1) ? validImgs[0] : "";
+
+    return {
+      text: rawText,
+      image: singleImg,
+      html: innerHtml
+    };
   }
 
   // Multi-Target Header Banner Image & Header Banner Text Detection
@@ -274,7 +269,6 @@ function parseHTML(html, targetUrl) {
     if (name && !sectionNames.includes(name)) sectionNames.push(name);
   });
 
-  // Step-by-step fallback matching V2 parity
   let qTables = [...doc.querySelectorAll('table.questionRowTbl')];
   if (!qTables.length) qTables = [...doc.querySelectorAll('div.question-pnl')];
 
