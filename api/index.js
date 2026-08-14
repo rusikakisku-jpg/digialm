@@ -129,13 +129,28 @@ function parseHTML(html, targetUrl) {
     return t ? t.replace(/[\u00A0\u200B]/g, ' ').replace(/\s+/g, ' ').trim() : '';
   }
 
+  // 100% PHP-identical make_abs_url logic
   function makeAbsUrl(src) {
-    if (!src || src.startsWith('data:')) return src || '';
-    if (src.startsWith('http')) return src;
-    try {
-      const base = new URL(targetUrl);
-      return src.startsWith('/') ? `${base.protocol}//${base.host}${src}` : `${base.protocol}//${base.host}/${src}`;
-    } catch { return src; }
+    if (!src) return '';
+    if (src.startsWith('data:image/')) return src; // Base64 data URL
+    if (src.startsWith('http')) return src.replace(/(?<!:)\/\/+/g, '/');
+
+    if (targetUrl) {
+      try {
+        const u = new URL(targetUrl);
+        const scheme = u.protocol;
+        const host = u.host;
+        if (src.startsWith('/')) {
+          return `${scheme}//${host}${src.replace(/\/\/+/g, '/')}`;
+        } else {
+          const path = u.pathname || '/';
+          const dir = path.substring(0, path.lastIndexOf('/')).replace(/\\/g, '/');
+          const fullPath = `${dir}/${src}`.replace(/\/\/+/g, '/');
+          return `${scheme}//${host}${fullPath}`;
+        }
+      } catch (e) {}
+    }
+    return src.replace(/(?<!:)\/\/+/g, '/');
   }
 
   function chosenToIndex(s) {
@@ -154,7 +169,7 @@ function parseHTML(html, targetUrl) {
     if (!node) return { text: "", image: "", html: "" };
 
     const cloned = node.cloneNode(true);
-    const imgs = cloned.querySelectorAll('img');
+    const imgs = [...cloned.querySelectorAll('img')];
     const validImgs = [];
     const toRemove = [];
 
@@ -172,7 +187,9 @@ function parseHTML(html, targetUrl) {
       }
     });
 
-    toRemove.forEach(rImg => rImg.parentNode?.removeChild(rImg));
+    toRemove.forEach(rImg => {
+      if (rImg.parentNode) rImg.parentNode.removeChild(rImg);
+    });
 
     const rawText = normText(cloned.textContent);
     const cleanCheckText = rawText.replace(/^(?:Q\.\s*\d+|[A-D][\.\)\s]*)/i, '').trim();
@@ -197,8 +214,8 @@ function parseHTML(html, targetUrl) {
 
   // 1. Extract Header Image / Logo URL
   let headerImage = '';
-  const imgNode = doc.querySelector('.header-image img, .main-info-pnl img, img[src*="logo"], img[src*="Banner"]');
-  if (imgNode) headerImage = makeAbsUrl(imgNode.getAttribute('src'));
+  const imgNode = doc.querySelector('.header-image img, .main-info-pnl img, table.main-info-pnl img, img[src*="logo"], img[src*="header"], img[src*="Banner"]');
+  if (imgNode) headerImage = makeAbsUrl(imgNode.getAttribute('src') || '');
 
   // 2. Extract Candidate Info (Excluding * Note rows)
   const candidateInfo = {};
@@ -213,7 +230,7 @@ function parseHTML(html, targetUrl) {
 
   // 3. Section Names
   const sectionNames = [];
-  doc.querySelectorAll('.section-lbl, .secName, .sec-lbl').forEach(s => {
+  doc.querySelectorAll('.section-lbl, .secName, .sec-lbl, td.section-lbl').forEach(s => {
     const name = normText(s.textContent).replace(/^Section\s*:\s*/i, '').trim();
     if (name && !sectionNames.includes(name)) sectionNames.push(name);
   });
@@ -229,19 +246,17 @@ function parseHTML(html, targetUrl) {
   let totalUnattempted = 0;
   let idx = 1;
 
-  // List all section headers for preceding calculation
-  const allSecHeaderNodes = [...doc.querySelectorAll('.section-lbl, .sec-lbl, .secName')];
+  const allSecHeaderNodes = [...doc.querySelectorAll('.section-lbl, .sec-lbl, .secName, td.section-lbl')];
 
   qTables.forEach(q => {
     let chosenRaw = null;
     const menuData = {};
 
-    // Detect Section: Find the IMMEDIATE PRECEDING section header (DOCUMENT_POSITION_PRECEDING = 2)
     let qSecName = 'General Section';
     let lastPrecedingHeader = null;
 
     allSecHeaderNodes.forEach(secHeader => {
-      // 2 is Node.DOCUMENT_POSITION_PRECEDING (secHeader is BEFORE q)
+      // 2 is Node.DOCUMENT_POSITION_PRECEDING
       if (q.compareDocumentPosition(secHeader) & 2) {
         lastPrecedingHeader = secHeader;
       }
@@ -252,7 +267,6 @@ function parseHTML(html, targetUrl) {
       if (secText) qSecName = secText;
     }
 
-    // Find candidate menu table associated with this question
     let parent = q.parentNode;
     let menuTable = null;
 
@@ -293,15 +307,26 @@ function parseHTML(html, targetUrl) {
     const qTd = qTds.length >= 2 ? qTds[1] : qTds[0];
     const qData = classifyAndProcessNode(qTd, false);
 
-    // Option rows content processing
-    const opts = q.querySelectorAll('td.rightAns, td.wrngAns');
+    // Option rows content processing - Exact PHP class matching: td.rightAns, td.wrngAns
+    const opts = [...q.querySelectorAll('td.rightAns, td.wrngAns, tr.rightAns td, tr.wrngAns td')];
+    
+    // De-duplicate td elements in case selector matches both tr and td
+    const uniqueOpts = [];
+    opts.forEach(opt => {
+      if (opt.tagName === 'TD' && !uniqueOpts.includes(opt)) {
+        uniqueOpts.push(opt);
+      }
+    });
+
     const options = [];
     let rightText = 'N/A';
     let rightPos = null;
 
-    opts.forEach((opt, i) => {
+    uniqueOpts.forEach((opt, i) => {
       const num = i + 1;
-      const isCorrect = opt.classList.contains('rightAns');
+      const cls = opt.getAttribute('class') || opt.parentNode?.getAttribute('class') || '';
+      const isCorrect = /rightAns/i.test(cls);
+      
       const optData = classifyAndProcessNode(opt, true);
       
       if (isCorrect) {
