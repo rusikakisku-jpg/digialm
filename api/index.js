@@ -206,7 +206,7 @@ function parseHTML(html, targetUrl) {
     }
   }
 
-  // Multi-Target Header Banner Image & Header Banner Text Detection (Excluding Candidate Photo & Signature)
+  // Multi-Target Header Banner Image & Header Banner Text Detection
   let headerBannerImg = '';
   let headerBannerText = '';
 
@@ -274,6 +274,7 @@ function parseHTML(html, targetUrl) {
     if (name && !sectionNames.includes(name)) sectionNames.push(name);
   });
 
+  // Step-by-step fallback matching V2 parity
   let qTables = [...doc.querySelectorAll('table.questionRowTbl')];
   if (!qTables.length) qTables = [...doc.querySelectorAll('div.question-pnl')];
 
