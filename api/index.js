@@ -206,7 +206,7 @@ function parseHTML(html, targetUrl) {
     }
   }
 
-  // Multi-Target Header Banner Image & Header Banner Text Detection (h2, div, span)
+  // Multi-Target Header Banner Image & Header Banner Text Detection
   let headerBannerImg = '';
   let headerBannerText = '';
 
@@ -232,12 +232,14 @@ function parseHTML(html, targetUrl) {
     for (const sel of textSelectors) {
       const nodes = doc.querySelectorAll(sel);
       for (const node of nodes) {
-        if (!node.querySelector('table.main-info-pnl')) {
-          const txt = normText(node.textContent);
-          if (txt && txt.length > 2 && !/question|option/i.test(txt)) {
-            headerBannerText = txt;
-            break;
-          }
+        const cloned = node.cloneNode(true);
+        // Remove table elements inside cloned header node (e.g. TGTET candidate info table inside div style="text-align:center")
+        cloned.querySelectorAll('table').forEach(tbl => tbl.parentNode?.removeChild(tbl));
+        
+        const txt = normText(cloned.textContent);
+        if (txt && txt.length > 2 && !/question|option/i.test(txt)) {
+          headerBannerText = txt;
+          break;
         }
       }
       if (headerBannerText) break;
