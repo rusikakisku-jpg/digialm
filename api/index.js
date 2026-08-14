@@ -206,7 +206,7 @@ function parseHTML(html, targetUrl) {
     }
   }
 
-  // Reliable Multi-Target Header Banner Image & Header Banner Text Detection
+  // Multi-Target Header Banner Image & Header Banner Text Detection (h2, div, span)
   let headerBannerImg = '';
   let headerBannerText = '';
 
@@ -224,9 +224,9 @@ function parseHTML(html, targetUrl) {
       '.header-image',
       '.header-text',
       '.header-title',
-      'div[style*="text-align:center"]',
-      'div[style*="text-align: center"]',
-      'h1', 'h2', 'h3'
+      '[style*="text-align:center"]',
+      '[style*="text-align: center"]',
+      'h1', 'h2', 'h3', 'h4'
     ];
 
     for (const sel of textSelectors) {
