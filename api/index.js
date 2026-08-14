@@ -186,19 +186,27 @@ function parseHTML(html, targetUrl) {
     });
 
     const rawText = normText(cloned.textContent);
+    const cleanCheckText = rawText.replace(/^(?:Q\.\s*\d+|[A-D][\.\)\s]*)/i, '').trim();
+
+    const hasText = Boolean(cleanCheckText);
+    const hasImage = validImgs.length > 0;
+
     let innerHtml = cloned.innerHTML || '';
     innerHtml = innerHtml.replace(/<sup>\s*<\/sup>/gi, '')
                          .replace(/<sub>\s*<\/sub>/gi, '')
                          .replace(/\s+/g, ' ')
                          .trim();
 
-    const singleImg = (validImgs.length === 1) ? validImgs[0] : "";
+    const hasHtmlTags = /<(?:sup|sub|table|tr|td|th|img|math|svg|span|div|b|i|u|strong|em|p|br)\b/i.test(innerHtml);
 
-    return {
-      text: rawText,
-      image: singleImg,
-      html: innerHtml
-    };
+    // MUTUALLY EXCLUSIVE CLASSIFICATION (Text vs Image vs HTML)
+    if (hasText && !hasImage && !hasHtmlTags) {
+      return { text: rawText, image: "", html: "" };
+    } else if (!hasText && hasImage && validImgs.length === 1) {
+      return { text: "", image: validImgs[0], html: "" };
+    } else {
+      return { text: "", image: "", html: innerHtml };
+    }
   }
 
   // Multi-Target Header Banner Image & Header Banner Text Detection
