@@ -206,16 +206,29 @@ function parseHTML(html, targetUrl) {
     }
   }
 
-  // Multi-Target Header Banner Image & Header Banner Text Detection
+  // Multi-Target Header Banner Image & Header Banner Text Detection (Excluding Candidate Photo & Signature)
   let headerBannerImg = '';
   let headerBannerText = '';
 
-  const imgNodes = doc.querySelectorAll('.header-image img, .main-info-pnl img, table.main-info-pnl img, img[src*="banner"], img[src*="Banner"], img[src*="logo"], img[src*="header"]');
+  const imgNodes = doc.querySelectorAll('.header-image img, img[src*="banner"], img[src*="Banner"], img[src*="logo"], img[src*="Logo"], img[src*="header"], img[src*="Header"]');
   for (const imgNode of imgNodes) {
     const rawSrc = imgNode.getAttribute('src') || '';
     if (rawSrc && !/tick\.png|cross\.png/i.test(rawSrc)) {
       headerBannerImg = makeAbsUrl(rawSrc);
       break;
+    }
+  }
+
+  if (!headerBannerImg) {
+    const infoImgs = doc.querySelectorAll('.main-info-pnl img, table.main-info-pnl img');
+    for (const ii of infoImgs) {
+      const rawSrc = ii.getAttribute('src') || '';
+      const parentTr = ii.closest('tr');
+      const trText = parentTr ? parentTr.textContent : '';
+      if (rawSrc && !rawSrc.startsWith('data:image') && !/photo|signature|tick\.png|cross\.png/i.test(trText)) {
+        headerBannerImg = makeAbsUrl(rawSrc);
+        break;
+      }
     }
   }
 
@@ -233,7 +246,6 @@ function parseHTML(html, targetUrl) {
       const nodes = doc.querySelectorAll(sel);
       for (const node of nodes) {
         const cloned = node.cloneNode(true);
-        // Remove table elements inside cloned header node (e.g. TGTET candidate info table inside div style="text-align:center")
         cloned.querySelectorAll('table').forEach(tbl => tbl.parentNode?.removeChild(tbl));
         
         const txt = normText(cloned.textContent);
